@@ -42,8 +42,8 @@ jobs:
         server: ${{ secrets.FTP_SERVER }}
         username: ${{ secrets.FTP_USERNAME }}
         password: ${{ secrets.FTP_PASSWORD }}
-        local-dir: ./frontend/out/
-        server-dir: ./public_html/fe.yourdomain.com/
+        local-dir: ./frontend/
+        server-dir: /
         dangerous-clean-slate: false
         exclude: |
           **/.git*
