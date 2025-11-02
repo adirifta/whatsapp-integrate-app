@@ -35,7 +35,6 @@ jobs:
       run: |
         cd frontend
         npm run build
-        npm run export
 
     - name: Setup FTP Deploy
       uses: SamKirkland/FTP-Deploy-Action@v4.3.4
