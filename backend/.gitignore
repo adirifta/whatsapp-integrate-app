@@ -1,0 +1,6 @@
+.env
+.env.local
+
+whatsapp_auth/
+.wwebjs_cahce/
+node_modules/

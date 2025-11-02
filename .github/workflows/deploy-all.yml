@@ -1,0 +1,24 @@
+name: Deploy Full Stack
+
+on:
+  push:
+    branches: [ main, master ]
+    paths-ignore:
+      - 'README.md'
+      - '**.md'
+  workflow_dispatch:
+
+env:
+  NODE_VERSION: '18'
+
+jobs:
+  deploy-backend:
+    name: Deploy Backend
+    uses: ./.github/workflows/deploy-be.yml
+    secrets: inherit
+
+  deploy-frontend:
+    name: Deploy Frontend
+    needs: deploy-backend
+    uses: ./.github/workflows/deploy-fe.yml
+    secrets: inherit
