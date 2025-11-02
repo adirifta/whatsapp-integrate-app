@@ -37,14 +37,13 @@ jobs:
         npm run build
 
     - name: Setup FTP Deploy
-      uses: SamKirkland/FTP-Deploy-Action@v4.3.4
+      uses: SamKirkland/FTP-Deploy-Action@4.0.0
       with:
         server: ${{ secrets.FTP_SERVER }}
         username: ${{ secrets.FTP_USERNAME }}
         password: ${{ secrets.FTP_PASSWORD }}
         local-dir: ./frontend/
         server-dir: ./
-        dangerous-clean-slate: false
         exclude: |
           **/.git*
           **/.git*/**
