@@ -82,7 +82,7 @@ prepare_backend() {
     
     # Install dependencies
     log "Installing dependencies..."
-    npm ci --only=production
+    npm install --only=production
     
     # Remove development files
     rm -rf node_modules/.cache
