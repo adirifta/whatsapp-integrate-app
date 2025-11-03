@@ -279,8 +279,8 @@ main() {
     
     validate_variables
     install_lftp
-    create_backup
-    build_frontend
+    # create_backup
+    # build_frontend
     deploy_frontend
     create_seo_files
     health_check

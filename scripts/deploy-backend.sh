@@ -203,8 +203,8 @@ main() {
     
     validate_variables
     install_lftp
-    create_backup
-    prepare_backend
+    # create_backup
+    # prepare_backend
     deploy_backend
     run_migrations
     health_check
