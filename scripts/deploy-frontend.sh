@@ -1,38 +1,28 @@
 #!/bin/bash
 
-# Deployment script for Frontend to cPanel via FTP
+# Fixed deployment script for Frontend to cPanel via FTP
 set -e
 
-echo "🚀 Starting Frontend Deployment..."
+echo "🚀 Starting Frontend Deployment"
 
 # Configuration
-ENVIRONMENT=${1:-staging}
+ENVIRONMENT=${1:-production}
 FTP_SERVER=${FTP_SERVER}
 FTP_USERNAME=${FTP_USERNAME}
 FTP_PASSWORD=${FTP_PASSWORD}
 FTP_PORT=${FTP_PORT:-21}
 FRONTEND_DIR=${FRONTEND_DIR:-public_html}
-API_URL=${API_URL:-http://localhost:5000/api}
+API_URL=${API_URL}
 
-# Colors for output
-RED='\033[0;31m'
+# Colors
 GREEN='\033[0;32m'
+RED='\033[0;31m'
 YELLOW='\033[1;33m'
-NC='\033[0m' # No Color
+NC='\033[0m'
 
-# Function to log messages
-log() {
-    echo -e "${GREEN}[$(date +'%Y-%m-%d %H:%M:%S')] $1${NC}"
-}
-
-warn() {
-    echo -e "${YELLOW}[$(date +'%Y-%m-%d %H:%M:%S')] WARNING: $1${NC}"
-}
-
-error() {
-    echo -e "${RED}[$(date +'%Y-%m-%d %H:%M:%S')] ERROR: $1${NC}"
-    exit 1
-}
+log() { echo -e "${GREEN}[$(date +'%H:%M:%S')] $1${NC}"; }
+warn() { echo -e "${YELLOW}[$(date +'%H:%M:%S')] WARNING: $1${NC}"; }
+error() { echo -e "${RED}[$(date +'%H:%M:%S')] ERROR: $1${NC}"; exit 1; }
 
 # Validate environment variables
 validate_variables() {
@@ -61,45 +51,37 @@ build_frontend() {
     
     cd frontend
     
+    # Clean up any existing builds
+    rm -rf .next out build
+    
     # Install dependencies
     log "Installing dependencies..."
     npm ci
     
-    # Create environment file
-    log "Creating environment configuration..."
-    cat > .env.production << EOF
+    # Create environment file if API_URL is provided
+    if [ -n "$API_URL" ]; then
+        log "Setting API URL: $API_URL"
+        cat > .env.production << EOF
 NEXT_PUBLIC_API_URL=$API_URL
 NODE_ENV=production
 EOF
+    else
+        warn "API_URL not set, using default configuration"
+    fi
 
     # Build the application
     log "Building Next.js application..."
     npm run build
     
-    # Export static files (if using static export)
-    log "Exporting static files..."
-    npm run export || warn "Static export not configured, using build folder"
+    # Check if we should export static files
+    if grep -q '"export"' package.json || [ -d ".next/static" ]; then
+        log "Next.js build completed successfully"
+    else
+        error "Next.js build failed or no output generated"
+    fi
     
     cd ..
     log "Frontend build completed"
-}
-
-# Create backup of current deployment
-create_backup() {
-    local backup_dir="/tmp/frontend_backup_$(date +%Y%m%d_%H%M%S)"
-    mkdir -p "$backup_dir"
-    
-    log "Creating backup of current frontend deployment..."
-    
-    lftp -e "
-        set ftp:ssl-allow no;
-        set ssl:verify-certificate no;
-        open -u $FTP_USERNAME,$FTP_PASSWORD $FTP_SERVER:$FTP_PORT;
-        mirror --reverse --verbose $FRONTEND_DIR $backup_dir;
-        bye
-    " || warn "Backup creation failed or no previous deployment found"
-    
-    log "Backup created at: $backup_dir"
 }
 
 # Deploy frontend via FTP
@@ -107,14 +89,7 @@ deploy_frontend() {
     log "Starting FTP deployment to $FTP_SERVER:$FRONTEND_DIR"
     
     # Determine build output directory
-    local build_dir="frontend/out"
-    if [ ! -d "$build_dir" ]; then
-        build_dir="frontend/.next"
-        if [ ! -d "$build_dir" ]; then
-            build_dir="frontend/build"
-        fi
-    fi
-    
+    local build_dir="frontend/.next"
     if [ ! -d "$build_dir" ]; then
         error "No build directory found. Please build the frontend first."
     fi
@@ -125,18 +100,28 @@ deploy_frontend() {
     local temp_dir="/tmp/frontend_deploy_$(date +%s)"
     mkdir -p "$temp_dir"
     
-    if [ -d "frontend/out" ]; then
-        # Static export
-        cp -r frontend/out/* "$temp_dir/"
-    elif [ -d "frontend/.next" ]; then
-        # Next.js build
-        cp -r frontend/.next "$temp_dir/"
-        cp -r frontend/public "$temp_dir/" 2>/dev/null || true
-        cp frontend/package.json "$temp_dir/" 2>/dev/null || true
-        cp frontend/next.config.js "$temp_dir/" 2>/dev/null || true
-        
-        # Create .htaccess for Next.js
-        cat > "$temp_dir/.htaccess" << 'EOF'
+    # Copy necessary files for Next.js deployment
+    log "Preparing deployment package..."
+    
+    # Copy .next directory
+    cp -r frontend/.next "$temp_dir/"
+    
+    # Copy public directory if it exists
+    if [ -d "frontend/public" ]; then
+        cp -r frontend/public "$temp_dir/"
+    fi
+    
+    # Copy essential configuration files
+    if [ -f "frontend/package.json" ]; then
+        cp frontend/package.json "$temp_dir/"
+    fi
+    
+    if [ -f "frontend/next.config.js" ]; then
+        cp frontend/next.config.js "$temp_dir/"
+    fi
+    
+    # Create .htaccess for proper routing
+    cat > "$temp_dir/.htaccess" << 'EOF'
 RewriteEngine On
 
 # Handle client-side routing
@@ -164,30 +149,49 @@ RewriteRule . /index.html [L]
     AddOutputFilterByType DEFLATE application/javascript
     AddOutputFilterByType DEFLATE application/x-javascript
 </IfModule>
+
+# Cache control
+<FilesMatch "\.(html|htm)$">
+    Header set Cache-Control "no-cache, no-store, must-revalidate"
+</FilesMatch>
+
+<FilesMatch "\.(css|js|png|jpg|jpeg|gif|ico|svg|woff|woff2)$">
+    Header set Cache-Control "max-age=31536000, public"
+</FilesMatch>
 EOF
-    fi
+
+    log "Deployment package created with $(find "$temp_dir" -type f | wc -l) files"
     
-    # Deploy using lftp
+    # Deploy using lftp with SIMPLE approach
+    log "Uploading files via FTP..."
+    
     lftp -e "
         set ftp:ssl-allow no;
         set ssl:verify-certificate no;
         set cmd:fail-exit true;
+        set ftp:list-options -a;
         open -u $FTP_USERNAME,$FTP_PASSWORD $FTP_SERVER:$FTP_PORT;
         
-        echo 'Creating directory structure...';
-        mkdir -p $FRONTEND_DIR;
+        echo 'Changing to target directory: $FRONTEND_DIR';
+        cd $FRONTEND_DIR || mkdir -p $FRONTEND_DIR;
         cd $FRONTEND_DIR;
         
-        echo 'Uploading files...';
-        mirror --reverse --verbose --delete --parallel=10 $temp_dir .;
+        echo 'Starting file upload...';
+        lcd $temp_dir;
+        mirror --reverse \
+               --verbose \
+               --delete \
+               --parallel=3 \
+               --exclude node_modules/ \
+               --exclude .git/ \
+               --exclude .github/ \
+               . .;
         
-        echo 'Setting permissions...';
+        echo 'Setting safe permissions...';
         chmod 755 .;
-        chmod 644 index.html;
-        chmod 644 .htaccess;
-        find . -name '*.js' -exec chmod 644 {} \;
-        find . -name '*.css' -exec chmod 644 {} \;
-        find . -name '*.html' -exec chmod 644 {} \;
+        
+        echo 'Listing deployed files:';
+        ls -la;
         
         echo 'Frontend deployment completed successfully!';
         bye
@@ -205,11 +209,17 @@ health_check() {
     # Wait for files to be served
     sleep 10
     
-    local max_attempts=30
+    local max_attempts=10
     local attempt=1
     
+    # Extract domain from FTP server (remove ftp. prefix if present)
+    local domain="${FTP_SERVER#ftp.}"
+    local health_url="http://$domain/"
+    
+    log "Testing frontend endpoint: $health_url"
+    
     while [ $attempt -le $max_attempts ]; do
-        if curl -f -s "http://$FTP_SERVER/" > /dev/null 2>&1; then
+        if curl -f -s --connect-timeout 10 "$health_url" > /dev/null 2>&1; then
             log "✅ Frontend health check passed!"
             return 0
         else
@@ -219,58 +229,8 @@ health_check() {
         fi
     done
     
-    error "Frontend health check failed after $max_attempts attempts"
-}
-
-# Create robots.txt and sitemap
-create_seo_files() {
-    log "Creating SEO files..."
-    
-    local temp_seo_dir="/tmp/seo_files_$(date +%s)"
-    mkdir -p "$temp_seo_dir"
-    
-    # robots.txt
-    cat > "$temp_seo_dir/robots.txt" << EOF
-User-agent: *
-Allow: /
-Disallow: /api/
-Disallow: /admin/
-
-Sitemap: https://$FTP_SERVER/sitemap.xml
-EOF
-
-    # sitemap.xml
-    cat > "$temp_seo_dir/sitemap.xml" << EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-    <url>
-        <loc>https://$FTP_SERVER/</loc>
-        <lastmod>$(date +%Y-%m-%d)</lastmod>
-        <changefreq>weekly</changefreq>
-        <priority>1.0</priority>
-    </url>
-    <url>
-        <loc>https://$FTP_SERVER/dashboard</loc>
-        <lastmod>$(date +%Y-%m-%d)</lastmod>
-        <changefreq>daily</changefreq>
-        <priority>0.8</priority>
-    </url>
-</urlset>
-EOF
-
-    # Upload SEO files
-    lftp -e "
-        set ftp:ssl-allow no;
-        set ssl:verify-certificate no;
-        open -u $FTP_USERNAME,$FTP_PASSWORD $FTP_SERVER:$FTP_PORT;
-        cd $FRONTEND_DIR;
-        put $temp_seo_dir/robots.txt;
-        put $temp_seo_dir/sitemap.xml;
-        bye
-    "
-    
-    rm -rf "$temp_seo_dir"
-    log "SEO files created and uploaded"
+    warn "Frontend health check failed after $max_attempts attempts"
+    return 1
 }
 
 # Main deployment function
@@ -279,10 +239,8 @@ main() {
     
     validate_variables
     install_lftp
-    # create_backup
-    # build_frontend
+    build_frontend
     deploy_frontend
-    create_seo_files
     health_check
     
     log "🎉 Frontend deployment completed successfully!"
